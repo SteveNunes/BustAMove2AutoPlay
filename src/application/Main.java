@@ -5,13 +5,14 @@ import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Robot;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.awt.image.MultiResolutionImage;
 import java.io.File;
 import java.security.SecureRandom;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -20,6 +21,8 @@ import java.util.concurrent.Executors;
 
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 
+import entities.CharacterSelector;
+import enums.Direction;
 import enums.GameAction;
 import enums.GameCharacter;
 import enums.GameStage;
@@ -35,18 +38,25 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.image.Image;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import util.CollectionUtils;
 import util.DesktopUtils;
+import util.FindFile;
 import util.IniFile;
 import util.Misc;
 import util.Sounds;
 
 public class Main extends Application {
 	
-		/** Parâmetros otimizados para emulador RetroArch em modo janela maximizada,
+	public static boolean close = false;
+	public final static IniFile ini = IniFile.getNewIniFileInstance("config.ini");
+	public static GameAction gameAction = GameAction.NOTHING;
+
+	/** Parâmetros otimizados para emulador RetroArch em modo fullscren 4:3,
 	 *  sem shader. Resolução nativa 1920 x 1080, Escala do windows em 125%
 	 *  As imagens dos botões devem ser obtidas através da tecla Z com o programa
 	 *  rodando, após se certificar que o campo inteiro dos comandos esteja
@@ -62,28 +72,33 @@ public class Main extends Application {
 	  * DIRECIONAIS: ESQUERDA, CIMA, DIREITA, BAIXO      = F, G, H, T
 	  * BOTOES (Formato XBOX): A, B, X, Y, RS, RT, START = J, K, U, I, O, L, M  
 	  */
-	final static String[] KEY_NAMES = {"LEFT", "DOWN", "RIGHT", "UP", "A", "B", "X", "Y"};
-	final static int[][] KEY_CODES = {{KeyEvent.VK_A, KeyEvent.VK_S, KeyEvent.VK_D, KeyEvent.VK_W, KeyEvent.VK_NUMPAD1, KeyEvent.VK_NUMPAD2, KeyEvent.VK_NUMPAD4, KeyEvent.VK_NUMPAD5, KeyEvent.VK_NUMPAD6, KeyEvent.VK_NUMPAD8, KeyEvent.VK_ENTER},
-																				{KeyEvent.VK_F, KeyEvent.VK_G, KeyEvent.VK_H, KeyEvent.VK_T, KeyEvent.VK_J, KeyEvent.VK_K, KeyEvent.VK_U, KeyEvent.VK_I, KeyEvent.VK_O, KeyEvent.VK_L, KeyEvent.VK_M}};
+	final static String[] KEY_NAMES = {"LEFT", "DOWN", "RIGHT", "UP", "A", "B", "X", "Y", "R1", "R2", "START"};
+	final static int[][] KEY_CODES = {{			KeyEvent.VK_A, KeyEvent.VK_S, 	KeyEvent.VK_D, KeyEvent.VK_W, KeyEvent.VK_NUMPAD1, KeyEvent.VK_NUMPAD2, KeyEvent.VK_NUMPAD4, KeyEvent.VK_NUMPAD5, 	KeyEvent.VK_NUMPAD3, 	KeyEvent.VK_NUMPAD8, 	KeyEvent.VK_ENTER},
+																				{	KeyEvent.VK_F, KeyEvent.VK_G, 	KeyEvent.VK_H, KeyEvent.VK_T, KeyEvent.VK_J, 				KeyEvent.VK_K, 				KeyEvent.VK_U, 				KeyEvent.VK_I, 				KeyEvent.VK_O, 				KeyEvent.VK_L, 				KeyEvent.VK_M}};
 	@SuppressWarnings("serial")
-	final static List<BufferedImage> BUTTONS_PNG = new ArrayList<>() {{
+	final static List<BufferedImage> BUTTONS_PNG = new LinkedList<>() {{
 		for (int n = 0; n < KEY_NAMES.length; n++)
 			add(ImageUtils.loadBufferedImageFromFile(".\\images\\buttons\\" + KEY_NAMES[n].charAt(0) + ".png"));
 	}};
 	@SuppressWarnings("serial")
-	final static List<BufferedImage> BUTTONS2_PNG = new ArrayList<>() {{
+	final static List<BufferedImage> BUTTONS2_PNG = new LinkedList<>() {{
 		for (int n = 0; n < KEY_NAMES.length; n++)
 			add(ImageUtils.loadBufferedImageFromFile(".\\images\\inputs\\" + KEY_NAMES[n].charAt(0) + ".png"));
 	}};
 
+	@SuppressWarnings("serial")
+	static Map<GameCharacter, Point> picLocations = new LinkedHashMap<>() {{
+		for (int y = 0; y < 5; y++)
+			for (int x = 0; x < 4; x++)
+				put(CharacterSelector.characterGrid[y][x], new Point(557 + x * 106, 166 + y * 101));
+	}};
+	static Map<String, Image> usersPicture = new LinkedHashMap<>();
+	public static File usersPictureDir = new File("images/usersPicture/");
 	final static BufferedImage characterSelectScreenPng = ImageUtils.loadBufferedImageFromFile(new File(".\\images\\misc\\character_select_screen.png"));
 	final static BufferedImage stageLoadingScreenPng = ImageUtils.loadBufferedImageFromFile(new File(".\\images\\misc\\stage_loading.png"));
 	final static BufferedImage readyPng = ImageUtils.loadBufferedImageFromFile(new File(".\\images\\misc\\ready.png"));
-	final static BufferedImage missPng = ImageUtils.loadBufferedImageFromFile(new File(".\\images\\misc\\miss.png"));
-	final static BufferedImage continuePng = ImageUtils.loadBufferedImageFromFile(new File(".\\images\\misc\\continue.png"));
 	final static Random random = new Random(new SecureRandom().nextInt(Integer.MAX_VALUE));
-	final static IniFile ini = IniFile.getNewIniFileInstance("config.ini");
-  final static ExecutorService executor = Executors.newFixedThreadPool(3);
+  final static ExecutorService executor = Executors.newFixedThreadPool(5);
 
 	static int start_X;
 	static int start_Y;
@@ -91,19 +106,34 @@ public class Main extends Application {
 	static int height;
 	static int spacing;
 	static int spacing2;
+	static int ready_X;
+	static int ready_Y;
+	static int ready_X2;
+	static int ready_Y2;
+	static int special_X1;
+	static int special_X2;
+	static int special_Xp;
+	static int special_Y1;
+	static int special_Y2;
+	static int special_capture_X;
+	static int special_capture_Y;
+	static int special_capture_W;
+	static int special_capture_H;
 
 	static Task<Void> mainTask;
 	static Robot[] robot;
-	static Stage mainStage;
+	static Stage stageMain;
 	static VBox mainVBox;
 	static Canvas canvasMainScreenshot;
 	static Canvas canvasButtonsScreenshot;
 	static Canvas canvasCatchedInputs;
+	static Canvas canvasTikTok;
 	static Canvas canvasConsole;
 	static GraphicsContext gcMainScreenshot;
 	static GraphicsContext gcButtonsScrenshot;
 	static GraphicsContext gcCatchedInputs;
 	static GraphicsContext gcConsole;
+	static GraphicsContext gcTikTok;
 
 	// CONFIGS (Definir os valores através do arquivo ini
 	static int debugPlayer; // Qual jogador será debugado
@@ -114,64 +144,74 @@ public class Main extends Application {
 	static boolean fixKeysAreEnabled; // Usar setas para alterar os valores START_X e START_Y, WIDTH e HEIGHT (CTRL pressionado), SPACING e SPACING2 (SHIFT pressionado)
 	
 	@SuppressWarnings("serial")
-	static List<List<GamepadButton>> currentInputs = new ArrayList<>() {{
-		add(new ArrayList<>());
-		add(new ArrayList<>());
+	static List<List<GamepadButton>> currentInputs = new LinkedList<>() {{
+		add(new LinkedList<>());
+		add(new LinkedList<>());
 	}};
 	@SuppressWarnings("serial")
-	static Map<GameStage, int[]> songBeatInfos = new HashMap<>() {{
-				put(GameStage.HEAT, new int[] {2099, 50, 4, 62, 8, 31});
-				put(GameStage.COMET, new int[] {1913, 25, 2, 72, 24, 52});
-				put(GameStage.SHORTY, new int[] {1994, 0, -1, 0, 0, 0}); 
-				put(GameStage.STRIKE, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.CAPOEIRA, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.KITTY_N, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.TSUTOMO, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.HIRO, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.KELLY, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.BIO, new int[] {2099, 0, 0, 0, 0, 0});
-				put(GameStage.ROBO_Z_GOLD, new int[] {2099, 0, 0, 0, 0, 0}); 
-				put(GameStage.PANDER, new int[] {1495, 40, 2, 96, 16, 48});
+	static Map<GameStage, int[]> songBeatInfos = new LinkedHashMap<>() {{
+				put(GameStage.HEAT, new int[] {2099, 60, 0, 63, 8, 32});
+				put(GameStage.COMET, new int[] {1913, 35, 2, 73, 24, 52});
+				put(GameStage.SHORTY, new int[] {1994, 80, -4, 73, 12, 32, 48}); 
+				put(GameStage.STRIKE, new int[] {2103, 60, -4, 57, 8, 32});
+				put(GameStage.CAPOEIRA, new int[] {1946, 40, -4, 61, 8, 24, 48});
+				put(GameStage.KITTY_N, new int[] {1813, 45, 0, 84, 16, 39, 52});
+				put(GameStage.TSUTOMO, new int[] {1841, 45, 0, 73, 24, 48});
+				put(GameStage.HIRO, new int[] {1945, 40, 4, 63, 16, 37});
+				put(GameStage.KELLY, new int[] {2393, 100, -3, 57, 8, 24});
+				put(GameStage.BIO, new int[] {1840, 80, 3, 65, 16, 32});
+				put(GameStage.ROBO_Z_GOLD, new int[] {1709, 40, 3, 77, 32, 64}); 
+				put(GameStage.PANDER, new int[] {1495, 50, 2, 97, 16, 48});
 	}};
-	static boolean testing = false;
-	static int testFixStartDelay = 80;
-	static List<GameCharacter> selectedChars = new ArrayList<>();
-	static List<GameStage> selectedStages = new ArrayList<>();
-	static List<Integer> arrowKeys = new ArrayList<>(Arrays.asList(NativeKeyEvent.VC_LEFT, NativeKeyEvent.VC_UP, NativeKeyEvent.VC_RIGHT, NativeKeyEvent.VC_DOWN));
-	static List<String> consoleMsgBuffer = new ArrayList<>();
+	static Map<String, GameCharacter> lastVotedCharacter = new LinkedHashMap<>();
+	static Map<String, GameStage> lastVotedStage = new LinkedHashMap<>();
+	static List<GameCharacter> selectedChars = new LinkedList<>();
+	static Map<GameCharacter, Integer> votedChars = new LinkedHashMap<>();
+	static Map<GameStage, Integer> votedStages = new LinkedHashMap<>();
+	static List<GameStage> selectedStages = new LinkedList<>();
+	static List<Integer> arrowKeys = new LinkedList<>(Arrays.asList(NativeKeyEvent.VC_LEFT, NativeKeyEvent.VC_UP, NativeKeyEvent.VC_RIGHT, NativeKeyEvent.VC_DOWN));
+	static List<String> consoleMsgBuffer = new LinkedList<>();
 	static GameStage currentStage = GameStage.HEAT;
-	static GameAction gameAction = GameAction.NOTHING;
-	static GameCharacter character[] = {GameCharacter.HEAT, GameCharacter.COMET};
+	static CharacterSelector characterSelector[];
+	static GamepadButton beatButton[] = {null, null};
 	static PlayerAction previewPlayerAction[] = {PlayerAction.DANCING, PlayerAction.DANCING};
 	static PlayerAction currentPlayerAction[] = {PlayerAction.DANCING, PlayerAction.DANCING};
-	static GamepadButton beatButton[] = {null, null};
-	static int songBeatInfo[];
-	static boolean close = false;
+	static String[] tikTokScrollMessage = {"", ""};
+	static List<String> tikTokBottomMessagesBuffer = new LinkedList<>();
+	static String[] lastCommand;
+	static boolean previewHaveInput[] = {false, false};
+	static boolean haveInput[] = {false, false};
 	static boolean alternativeOutfit = false;
 	static boolean atSolo = false;
 	static boolean atPreSolo = false;
 	static boolean canStealSolo = false;
-	static boolean previewHaveInput[] = {false, false};
-	static boolean haveInput[] = {false, false};
-	static int selectedChar = 0;
-	static long nextCTimeToPress = 0;
-	static int lastFinishButton = random.nextInt(1);
-	static int currentBeat = 0;
+	static boolean selectionByVote = false;
+	static int songBeatInfo[];
 	static int specials[] = {0, 0};
 	static int playerDificult[] = {1, 1};
-	static long lastBeatDelay;
+	static int[] tikTokScrollX = {0, 0};
+	static int selectedChar = 0;
+	static int lastFinishButton = random.nextInt(1);
+	static int currentBeat = 0;
 	static int nonPreSoloAttackProc;
 	static int preSoloAttackProc;
 	static int nonPreSoloCounterProc;
 	static int preSoloCounterProc;
 	static int dodgeUponFailCounterProc;
 	static int intentionalMissInputProc;
-	static List<Integer> beatsTestDelay = new ArrayList<>();
-	static long lastBeatTestDelay = 0;
-	
+	static int repeatedCommands[];
+	static long nextCTimeToPress = 0;
+	static long lastBeatDelay;
+	static long selectionByVoteTimeOut;
+	static long voteTimeOut = 0;
+	static double[] tikTokScrollTextWidth = {0, 0};
+	static int fixX = 0;
+	static int fixY = 0;
 	
 	@Override
 	public void start(Stage stage) throws Exception {
+		if (!usersPictureDir.exists())
+			usersPictureDir.mkdir();
 		loadConfigs();
 		createCanvas();
 		setStage(stage);
@@ -182,7 +222,7 @@ public class Main extends Application {
 		ImageUtils.setImageScanIgnoreColor(Color.WHITE);
 		if (debugCapturedScreenshots || debugCatchedInputs || debugConsole) {
 			refreshDebugWindows(true);
-			mainStage.show();
+			stageMain.show();
 		}
 		
 		executor.execute(mainTask = new Task<Void> () {
@@ -192,10 +232,24 @@ public class Main extends Application {
 				return null;
 			}
 		});
+		
+		if (debugCapturedScreenshots || debugCatchedInputs)
+			executor.execute(mainTask = new Task<Void> () {
+				@Override
+				protected Void call() throws Exception {
+					while (!close) {
+						for (int pl = 0; pl < 2; pl++)
+							getCurrentInputs(pl);
+						Misc.sleep(50);
+					}
+					return null;
+				}
+			});
+		
 	}
 	
 	static void setStage(Stage stage) {
-		mainStage = stage;
+		stageMain = stage;
 		stage.setAlwaysOnTop(true);
 		stage.initStyle(StageStyle.UNDECORATED);
 		stage.setResizable(false);
@@ -227,7 +281,7 @@ public class Main extends Application {
 		{ songBeatInfo[0] = value; }
 
 	static int getBeatStartingDelay()
-		{ return songBeatInfo[1] + testFixStartDelay; }
+		{ return songBeatInfo[1]; }
 	
 	void setBeatStartingDelay(int value)
 		{ songBeatInfo[1] = value; }
@@ -245,16 +299,20 @@ public class Main extends Application {
 		GlobalKeyListener.startListener();
 		GlobalKeyListener.setOnKeyPressedEvent(k -> {
 			Platform.runLater(() -> {
+				if (k.getKeyCode() == NativeKeyEvent.VC_LEFT)
+					{ fixX--; System.out.println(fixX + " " + fixY); }
+				else if (k.getKeyCode() == NativeKeyEvent.VC_RIGHT)
+					{ fixX++; System.out.println(fixX + " " + fixY); }
+				else if (k.getKeyCode() == NativeKeyEvent.VC_UP)
+					{ fixY--; System.out.println(fixX + " " + fixY); }
+				else if (k.getKeyCode() == NativeKeyEvent.VC_DOWN)
+					{ fixY++; System.out.println(fixX + " " + fixY); }
+				if (k.getKeyCode() == NativeKeyEvent.VC_N)
+					voteOnCharacter(CharacterSelector.getRandom(), 2);
+				if (k.getKeyCode() == NativeKeyEvent.VC_M)
+					voteOnStage(GameStage.getRandom(false), 2);
 				if (k.getKeyCode() == NativeKeyEvent.VC_R) // R reseta para o modo 'WAITING_FOR_MUSIC_START'
 					gameAction = GameAction.WAITING_FOR_MUSIC_START;
-				else if (k.getKeyCode() == NativeKeyEvent.VC_UP) {
-					testFixStartDelay += 5;
-					Platform.runLater(() -> sendToConsole("testFixStartDelay: " + testFixStartDelay));
-				}
-				else if (k.getKeyCode() == NativeKeyEvent.VC_DOWN) {
-					testFixStartDelay -= 5;
-					Platform.runLater(() -> sendToConsole("testFixStartDelay: " + testFixStartDelay));
-				}
 				else if (k.getRawCode() == KeyEvent.VK_1) { // F1 - Altera o player da janela de debug
 					debugPlayer = (debugPlayer % 2) + 1;
 					sendToConsole("" + debugPlayer);
@@ -287,15 +345,6 @@ public class Main extends Application {
 			});
 			if (k.getKeyCode() == NativeKeyEvent.VC_ESCAPE) // Aperte ESC para finalizar a macro
 				close();
-			if (testing && lastBeatTestDelay > 0 && (k.getKeyCode() == NativeKeyEvent.VC_1 || k.getKeyCode() == NativeKeyEvent.VC_2)) {
-				int delay = (int)(System.currentTimeMillis() - lastBeatTestDelay), media = 0;
-				beatsTestDelay.add(delay);
-				for (int i : beatsTestDelay)
-					media += i;
-				media /= beatsTestDelay.size();
-				System.out.println(delay + "ms (Media: " + media + "ms, x4 = " + (media * 4) + "ms)");
-			}
-			lastBeatTestDelay = System.currentTimeMillis();
 			veryfyArrowKeysPress(k);
 		});
 		GlobalKeyListener.setOnKeyRepeatedEvent(k -> veryfyArrowKeysPress(k));
@@ -370,7 +419,7 @@ public class Main extends Application {
 		File	file = new File(".\\images\\screenshots\\input_screenshot_" + i + ".png");
 		ImageUtils.saveImageToFile(sc2, file);
 	}
-
+	
 	static void loadConfigs() {
 		nonPreSoloAttackProc = ini.readAsInteger("DIFICULT", "nonPreSoloAttackProc", 5);
 		preSoloAttackProc = ini.readAsInteger("DIFICULT", "preSoloAttackProc", 50);
@@ -380,27 +429,49 @@ public class Main extends Application {
 		intentionalMissInputProc = ini.readAsInteger("DIFICULT", "intentionalMissInputProc", 0);
 		debugPlayer = ini.readAsInteger("CONFIG", "debugPlayer", 0);
 		autoPlay = ini.readAsInteger("CONFIG", "autoPlay", 2);
+		selectionByVoteTimeOut = ini.readAsLong("CONFIG", "selectionByVoteTimeOut", 30000L);
 		debugCapturedScreenshots = ini.readAsBoolean("CONFIG", "debugCapturedScreenshots", false);
 		debugCatchedInputs = ini.readAsBoolean("CONFIG", "debugCatchedInputs", false);
+		selectionByVote =  ini.readAsBoolean("CONFIG", "selectionByVote", false);
 		debugConsole = ini.readAsBoolean("CONFIG", "debugConsole", false);
 		fixKeysAreEnabled = ini.readAsBoolean("CONFIG", "fixKeysAreEnabled", false);
+		alternativeOutfit = ini.readAsBoolean("CONFIG", "alternativeOutfit", false);
 		start_X = ini.readAsInteger("CAPTURE_COORDS", "start_X", 313);
 		start_Y = ini.readAsInteger("CAPTURE_COORDS", "start_Y", 413);
 		width = ini.readAsInteger("CAPTURE_COORDS", "width", 56);
 		height = ini.readAsInteger("CAPTURE_COORDS", "height", 45);
 		spacing = ini.readAsInteger("CAPTURE_COORDS", "spacing", 514);
 		spacing2 = ini.readAsInteger("CAPTURE_COORDS", "spacing2", 5);
+		ready_X = ini.readAsInteger("CAPTURE_COORDS", "ready_X", 600);
+		ready_Y = ini.readAsInteger("CAPTURE_COORDS", "ready_Y", 455);
+		ready_X2 = ini.readAsInteger("CAPTURE_COORDS", "ready_X2", 740);
+		ready_Y2 = ini.readAsInteger("CAPTURE_COORDS", "ready_Y2", 440);
+		special_X1 = ini.readAsInteger("CAPTURE_COORDS", "special_X1", 19);
+		special_X2 = ini.readAsInteger("CAPTURE_COORDS", "special_X2", 1030);
+		special_Xp = ini.readAsInteger("CAPTURE_COORDS", "special_Xp", 19);
+		special_Y1 = ini.readAsInteger("CAPTURE_COORDS", "special_Y1", 15);
+		special_Y2 = ini.readAsInteger("CAPTURE_COORDS", "special_Y2", 37);
+		special_capture_X = ini.readAsInteger("CAPTURE_COORDS", "special_capture_X", 245);
+		special_capture_Y = ini.readAsInteger("CAPTURE_COORDS", "special_capture_Y", 740);
+		special_capture_W = ini.readAsInteger("CAPTURE_COORDS", "special_capture_W", 1046);
+		special_capture_H = ini.readAsInteger("CAPTURE_COORDS", "special_capture_H", 50);
 		currentStage = ini.readAsEnum("DEBUG", "currentStage", GameStage.class, GameStage.HEAT);
 		gameAction = ini.readAsEnum("DEBUG", "gameAction", GameAction.class, GameAction.NOTHING);
 		List<GameCharacter> chars = ini.readAsEnumList("DEBUG", "characters", GameCharacter.class, Arrays.asList(GameCharacter.HEAT, GameCharacter.COMET));
-		for (int n = 0; n < 2; n++)
-			character[n] = (GameCharacter) chars.get(n);
+		characterSelector = new CharacterSelector[] {new CharacterSelector((GameCharacter) chars.get(0)), new CharacterSelector((GameCharacter) chars.get(1))};
 		if (ini.read("SELECTED", "CHARACTERS") != null)
 			for (String item : ini.read("SELECTED", "CHARACTERS").split(" "))
 				selectedChars.add(GameCharacter.valueOf(item));
 		if (ini.read("SELECTED", "STAGES") != null)
 			for (String item : ini.read("SELECTED", "STAGES").split(" "))
 				selectedStages.add(GameStage.valueOf(item));
+		for (File file : FindFile.findFile(usersPictureDir.getAbsolutePath())) {
+			if (!file.getName().equals("circle_image_mask.png") && !file.getName().equals("unknown.png")) {
+				String user = file.getName().replace(".png", "");
+				Image picture = new Image("file:" + file.getAbsolutePath());
+				usersPicture.put(user, picture);
+			}
+		}
 	}
 
 	static void saveConfigs() {
@@ -416,31 +487,51 @@ public class Main extends Application {
 		ini.write("CONFIG", "debugCatchedInputs", "" + debugCatchedInputs);
 		ini.write("CONFIG", "debugConsole", "" + debugConsole);
 		ini.write("CONFIG", "fixKeysAreEnabled", "" + fixKeysAreEnabled);
+		ini.write("CONFIG", "selectionByVote", "" + selectionByVote);
+		ini.write("CONFIG", "selectionByVoteTimeOut", "" + selectionByVoteTimeOut);
+		ini.write("CONFIG", "alternativeOutfit", "" + alternativeOutfit);
 		ini.write("CAPTURE_COORDS", "start_X", "" + start_X);
 		ini.write("CAPTURE_COORDS", "start_Y", "" + start_Y);
 		ini.write("CAPTURE_COORDS", "width", "" + width);
 		ini.write("CAPTURE_COORDS", "height", "" + height);
 		ini.write("CAPTURE_COORDS", "spacing", "" + spacing);
 		ini.write("CAPTURE_COORDS", "spacing2", "" + spacing2);
+		ini.write("CAPTURE_COORDS", "ready_X", "" + ready_X);
+		ini.write("CAPTURE_COORDS", "ready_Y", "" + ready_Y);
+		ini.write("CAPTURE_COORDS", "ready_X", "" + ready_X2);
+		ini.write("CAPTURE_COORDS", "ready_Y", "" + ready_Y2);
+		ini.write("CAPTURE_COORDS", "special_X1", "" + special_X1);
+		ini.write("CAPTURE_COORDS", "special_X2", "" + special_X2);
+		ini.write("CAPTURE_COORDS", "special_Xp", "" + special_Xp);
+		ini.write("CAPTURE_COORDS", "special_Y1", "" + special_Y1);
+		ini.write("CAPTURE_COORDS", "special_Y2", "" + special_Y2);
+		ini.write("CAPTURE_COORDS", "special_capture_X", "" + special_capture_X);
+		ini.write("CAPTURE_COORDS", "special_capture_Y", "" + special_capture_Y);
+		ini.write("CAPTURE_COORDS", "special_capture_W", "" + special_capture_W);
+		ini.write("CAPTURE_COORDS", "special_capture_H", "" + special_capture_H);
 		if (!selectedChars.isEmpty())
 			ini.write("SELECTED", "CHARACTERS", enumListToString(selectedChars));
 		if (!selectedStages.isEmpty())
 			ini.write("SELECTED", "STAGES", enumListToString(selectedStages));
+		for (String userName : usersPicture.keySet())
+			ImageUtils.saveImageToFile(usersPicture.get(userName), usersPictureDir.getAbsolutePath() + "\\" + userName + ".png");
 	}
 
-	private static <T extends Enum<T>> String enumListToString(List<T> enumList) {
+	static <T extends Enum<T>> String enumListToString(List<T> enumList) {
 		String s = "";
 		for (T e : enumList)
 			s += (s.isEmpty() ? "" : " ") + e.name();
 		return s;
 	}
 
-	static void close() {
+	public static void close() {
 		saveConfigs();
 		close = true;
-		executor.shutdown();
+		executor.shutdownNow();
 		GlobalKeyListener.stopListener();
 		Platform.exit();
+		Misc.sleep(1000);
+		System.exit(0);
 	}
 
 	static void refreshDebugWindows(boolean recreateCanvas) {
@@ -471,12 +562,12 @@ public class Main extends Application {
 			mainVBox.getChildren().addAll(canvasButtonsScreenshot, canvasCatchedInputs);
 		if (debugConsole)
 			mainVBox.getChildren().add(canvasConsole);
-		mainStage.setScene(new Scene(mainVBox));
+		stageMain.setScene(new Scene(mainVBox));
 		int y = 0;
 		for (int n = 0; n < mainVBox.getChildren().size(); n++)
 			y += ((Canvas)mainVBox.getChildren().get(n)).getHeight();
-		mainStage.setX(debugPlayer == 1 ? 0 : DesktopUtils.getSystemScreenWidth() - mainStage.getWidth());
-		mainStage.setY(start_Y - y - 10);
+		stageMain.setX(debugPlayer == 1 ? 0 : DesktopUtils.getSystemScreenWidth() - stageMain.getWidth());
+		stageMain.setY(start_Y - y - 10);
 	}
 	
 	static void createCanvas() {
@@ -502,18 +593,12 @@ public class Main extends Application {
 		BufferedImage sc = getScreenShot();
 		if (ImageUtils.isImageContained(characterSelectScreenPng, sc) != null)
 			runCharacterScreen();
-		else if (ImageUtils.isImageContained(continuePng, sc) != null) {
-			sendToConsole("PRESSED START FOR CONTINUE");
-			setGameAction(GameAction.WAITING_FOR_MUSIC_START);
-			pressButton(GamepadButton.START);
-		}
 		else if (gameAction == GameAction.WAITING_FOR_MUSIC_START)
 			waitForSongStartAndCatchSongBpm();
 		drawConsole();
 	}
 	
 	static void mainLoop() {
-		boolean pair = false;
 		verifyWhichScreenIsRightNow();
 		while (!close) {
 			if (gameAction == GameAction.DANCING) {
@@ -522,15 +607,9 @@ public class Main extends Application {
 					int fixOverTime = (getBeatFixMsOvertime() != 0 && currentBeat % Math.abs(getBeatFixMsOvertime()) == 0 ? (getBeatFixMsOvertime() < 0 ? -1 : 1) : 0);
 					long waitForNewInputs = (long)(nextCTimeToPress + getBeatDelay() / 2.75);
 					nextCTimeToPress += getBeatDelay() + fixOverTime;
-					pair = !pair;
 					pressFourthBeatButtons();
-					if (!testing)
-						beep();
-					mainRobot().mouseMove(start_X + width * 7, start_Y + (pair ? height : 0));
-					Misc.copyArray(currentPlayerAction, previewPlayerAction);
-					Misc.copyArray(haveInput, previewHaveInput);
-					for (int pl = 0; pl < 2; pl++)
-						checkForMiss(pl);
+					CollectionUtils.copyArray(currentPlayerAction, previewPlayerAction);
+					CollectionUtils.copyArray(haveInput, previewHaveInput);
 					if (System.currentTimeMillis() < waitForNewInputs)
 						Misc.sleep(waitForNewInputs - System.currentTimeMillis());
 					if (!close && gameAction == GameAction.DANCING) {
@@ -538,9 +617,8 @@ public class Main extends Application {
 						updateStatus();
 						if (getMusicEndBeat() == currentBeat) {
 							setGameAction(GameAction.AT_WIN_SCREEN);
-							Misc.sleep(random.nextLong(1500) + 12000);
-							pressButton(0, GamepadButton.START);
-							pressButton(1, GamepadButton.START);
+							Misc.sleep(12000);
+							setGameAction(GameAction.AT_FERVER_TIME);
 						}
 						else if (getMusicEndBeat() == currentBeat + 1)
 							atPreSolo = true;
@@ -559,81 +637,178 @@ public class Main extends Application {
 		}
 	}
 	
+	public static void voteOnCharacter(GameCharacter character, int total) {
+		if (gameAction != GameAction.AT_CHAR_SELECT_SCREEN)
+			return;
+		if (!votedChars.containsKey(character))
+			votedChars.put(character, 0);
+		votedChars.put(character, votedChars.get(character) + total);
+	}
+	
+	public static void voteOnCharacter(GameCharacter character)
+		{ voteOnCharacter(character, 2); }
+
+	public static void voteOnStage(GameStage stage, int total) {
+		if (gameAction != GameAction.AT_STAGE_SELECT_SCREEN)
+			return;
+		if (!votedStages.containsKey(stage))
+			votedStages.put(stage, 0);
+		votedStages.put(stage, votedStages.get(stage) + total);
+	}
+	
+	public static void voteOnStage(GameStage stage)
+		{ voteOnStage(stage, 2); }
+
+	static void clickOnCenterScreen() {
+		mainRobot().mouseMove(DesktopUtils.getSystemScreenWidth() / 2, DesktopUtils.getSystemScreenHeight() / 2);
+		mainRobot().delay(30);
+		mainRobot().mousePress(MouseEvent.BUTTON1_DOWN_MASK);
+		mainRobot().delay(30);
+		mainRobot().mouseRelease(MouseEvent.BUTTON1_DOWN_MASK);
+	}
+	
 	static void runCharacterScreen() {
 		sendToConsole("ENTERED AT THE SELECT CHARACTER SCREEN");
 		setGameAction(GameAction.AT_CHAR_SELECT_SCREEN);
+		clickOnCenterScreen();
+		currentBeat = 0;
+		voteTimeOut = System.currentTimeMillis() + selectionByVoteTimeOut;
 		selectedChar = 0;
-		GameCharacter[] choice = {GameCharacter.getRandom(), GameCharacter.getRandom()};
+		CharacterSelector[] choice = {new CharacterSelector(CharacterSelector.getRandom()), new CharacterSelector(CharacterSelector.getRandom())};
+		if (selectedChars.size() >= CharacterSelector.getCharactersList().size()) { // Se a lista de personagens já escolhidos chegar ao limite, zerar a lista e alterar o outfit para a próxima remessa de escolhas
+			selectedChars.clear();
+			alternativeOutfit = !alternativeOutfit;
+		}
+		if (selectedStages.size() >= GameStage.getListOfAll().size())
+			selectedStages.clear();
+		for (int pl = 0; !close && pl < 2; pl++) {
+			playerDificult[pl] = 1;
+			while (!close && (selectedChars.contains(choice[pl].getCharacter()) || choice[pl].getCharacter().equals(choice[pl == 0 ? 1 : 0].getCharacter()))) // Enquanto o char escolhido aleatoriamente já tiver sido escolhido previamente, ou for o mesmo personagem do outro jogador, escolher o proximo
+				choice[pl].getNext();
+			robot[pl].delay(random.nextInt(1000) + 1000);
+			votedChars.put(choice[pl].getCharacter(), 1);
+		}
 		for (int pll = 0; !close && pll < 2; pll++) {
 			final int pl = pll;
 			new Thread(() -> { // Selecionando personagem
-				playerDificult[pl] = 1;
-				while (!close && (selectedChars.contains(choice[pl]) || choice[pl].equals(choice[pl == 0 ? 1 : 0]))) // Enquanto o char escolhido aleatoriamente já tiver sido escolhido previamente, ou for o mesmo personagem do outro jogador, escolher o proximo
-					choice[pl] = choice[pl].getNext();
-				selectedChars.add(choice[pl]);
-				robot[pl].delay(random.nextInt(1000) + 1000);
-				if (selectedChars.size() == GameCharacter.getListOfAll().size()) { // Se a lista de personagens já escolhidos chegar ao limite, zerar a lista e alterar o outfit para a próxima remessa de escolhas
-					selectedChars.clear();
-					alternativeOutfit = !alternativeOutfit;
+				while (!close && currentVotedChars() != null && (!selectionByVote || System.currentTimeMillis() < voteTimeOut)) {
+					moveCursorTo(pl, new CharacterSelector(currentVotedChars().get(pl)));
+					Misc.sleep(100);
+					if (!selectionByVote)
+						break;
 				}
-				while (!close && !character[pl].isAtSameRow(choice[pl])) { // Movendo o cursor para baixo até chegar na linha do personagem escolhido
-					robot[pl].delay(random.nextInt(100) + 400);
-					pressButton(pl, GamepadButton.DOWN);
-					character[pl] = character[pl].getNext(character[pl].getValue() < 2 ? 3 : 4);
+				if (!selectedChars.contains(characterSelector[pl].getCharacter()))
+					selectedChars.add(characterSelector[pl].getCharacter());
+				if (!close) {
+					robot[pl].delay(random.nextInt(100) + 100);
+					pressButton(pl, alternativeOutfit ? GamepadButton.Y : GamepadButton.B);
+					robot[pl].delay(random.nextInt(100) + 100);
+					for (int n = 0, r = random.nextInt(6); !close && n <= r; n++) { // Seleciona a dificuldade aleatoriamente
+						robot[pl].delay(random.nextInt(150) + 150);
+						if (n < r && ++playerDificult[pl] == 3)
+							playerDificult[pl] = 0;
+						pressButton(pl, n < r ? GamepadButton.DOWN : GamepadButton.B);
+					}
+					selectedChar++;
 				}
-				while (!close && !character[pl].equals(choice[pl])) { // Movendo o cursor horizontalmente até chegar na linha do personagem escolhido
-					robot[pl].delay(random.nextInt(100) + 400);
-					pressButton(pl, character[pl].getValue() < choice[pl].getValue() ? GamepadButton.RIGHT : GamepadButton.LEFT);
-					character[pl] = character[pl].getValue() < choice[pl].getValue() ? character[pl].getNext() : character[pl].getPreview();
-				}
-				robot[pl].delay(random.nextInt(100) + 500);
-				pressButton(pl, alternativeOutfit ? GamepadButton.Y : GamepadButton.B);
-				robot[pl].delay(random.nextInt(500) + 500);
-				for (int n = 0, r = random.nextInt(6); !close && n <= r; n++) { // Seleciona a dificuldade aleatoriamente
-					robot[pl].delay(random.nextInt(100) + 400);
-					if (n < r && ++playerDificult[pl] == 3)
-						playerDificult[pl] = 0;
-					pressButton(pl, n < r ? GamepadButton.DOWN : GamepadButton.B);
-				}
-				selectedChar++;
+				votedChars.remove(choice[pl].getCharacter());
 			}).start();
 		}
 		while (!close && selectedChar < 2)
-			Misc.sleep(100);
-		boolean someoneSelectedRoboZ = character[0].equals(GameCharacter.ROBO_Z_GOLD) || character[1].equals(GameCharacter.ROBO_Z_GOLD);
+			Misc.sleep(500);
+		voteTimeOut = System.currentTimeMillis() + selectionByVoteTimeOut;
+		gameAction = GameAction.AT_STAGE_SELECT_SCREEN;
+		boolean someoneSelectedRoboZ = characterSelector[0].getCharacter().equals(GameCharacter.ROBO_Z_GOLD) || characterSelector[1].getCharacter().equals(GameCharacter.ROBO_Z_GOLD);
 		// Seleciona o stage aleatoriamente, tomando cuidado para não tentar escolher stage já escolhido previamente, ou escolher o stage do Robo Z sem que ninguém tenha escolhido ele, pois o stage dele só aparece se alguém tiver escolhido ele
-		robot[0].delay(random.nextInt(1000) + 1000);
+		if (!close)
+			robot[0].delay(random.nextInt(1000) + 1000);
 		GameStage stage = GameStage.getRandom(someoneSelectedRoboZ);
+		clickOnCenterScreen();
 		while (!close && selectedStages.contains(stage))
 			stage = stage.getNext(someoneSelectedRoboZ);
-		selectedStages.add(stage);
-		if (selectedStages.size() == GameStage.getListOfAll().size())
-			selectedStages.clear();
-		while (!close && !currentStage.equals(stage)) {
-			pressButton(0, currentStage.getValue() < stage.getValue() ? GamepadButton.RIGHT : GamepadButton.LEFT);
-			currentStage = currentStage.getValue() < stage.getValue() ? currentStage.getNext(someoneSelectedRoboZ) : currentStage.getPreview(someoneSelectedRoboZ);
-			robot[0].delay(random.nextInt(150) + 200);
+		votedStages.put(stage, 1);
+		while (!close && currentVotedStages() != null && (!selectionByVote || System.currentTimeMillis() < voteTimeOut)) {
+			stage = currentVotedStages().get(0);
+			while (!close && !currentStage.equals(stage)) {
+				pressButton(0, currentStage.getValue() < stage.getValue() ? GamepadButton.RIGHT : GamepadButton.LEFT);
+				currentStage = currentStage.getValue() < stage.getValue() ? currentStage.getNext(someoneSelectedRoboZ) : currentStage.getPreview(someoneSelectedRoboZ);
+				robot[0].delay(random.nextInt(150) + 150);
+			}
+			Misc.sleep(100);
+			if (!selectionByVote)
+				break;
 		}
-		pressButton(0, GamepadButton.B);
-		Platform.runLater(() -> {
-			String[] dif = {"EASY", "NORMAL", "MIX"};
-			sendToConsole("P1: " + character[0] + " (" + dif[playerDificult[0]] + ")");
-			sendToConsole("P2: " + character[1] + " (" + dif[playerDificult[1]] + ")");
-			sendToConsole("STAGE: " + currentStage);
-		});
-		waitForSongStartAndCatchSongBpm();
+		for (int pl = 0; pl < 2; pl++)
+			if (votedChars.containsKey(characterSelector[pl].getCharacter()))
+				votedChars.remove(characterSelector[pl].getCharacter());
+		if (votedStages.containsKey(currentStage))
+				votedStages.remove(currentStage);
+		if (!close) {
+			selectedStages.add(stage);
+			pressButton(0, GamepadButton.B);
+			Platform.runLater(() -> {
+				String[] dif = {"EASY", "NORMAL", "MIX"};
+				sendToConsole("P1: " + characterSelector[0].getCharacter() + " (" + dif[playerDificult[0]] + ")");
+				sendToConsole("P2: " + characterSelector[1].getCharacter() + " (" + dif[playerDificult[1]] + ")");
+				sendToConsole("STAGE: " + currentStage);
+			});
+			while (!close && ImageUtils.isImageContained(stageLoadingScreenPng, getScreenShot()) == null);
+			while (!close && ImageUtils.isImageContained(stageLoadingScreenPng, getScreenShot()) != null);
+			waitForSongStartAndCatchSongBpm();
+		}
 	}
 	
+	static LinkedList<GameCharacter> currentVotedChars() {
+		if (votedChars == null)
+			return null;
+		synchronized (votedChars) {
+			LinkedList<GameCharacter> top = new LinkedList<>(votedChars.keySet());
+			top.sort((o1, o2) -> votedChars.get(o1) < votedChars.get(o2) ? 1 :
+				votedChars.get(o1) > votedChars.get(o2) ? -1 : 0);
+			return top;
+		}
+	}
+
+	static LinkedList<GameStage> currentVotedStages() {
+		if (votedStages == null)
+			return null;
+		synchronized (votedStages) {
+			LinkedList<GameStage> top = new LinkedList<>(votedStages.keySet());
+			top.sort((o1, o2) -> votedStages.get(o1) < votedStages.get(o2) ? 1 :
+				votedStages.get(o1) > votedStages.get(o2) ? -1 : 0);
+			return top;
+		}
+	}
+
+	static void moveCursorTo(int player, CharacterSelector selector) {
+		while (!close && !characterSelector[player].isAtSameRow(selector)) { // Movendo o cursor verticalmente até chegar na linha do personagem escolhido
+			if (characterSelector[player].getCursorY() > selector.getCursorY() && characterSelector[player].getCursorY() == 1 &&
+					(characterSelector[player].getCursorX() == 0 || characterSelector[player].getCursorX() == 3)) {
+						robot[player].delay(random.nextInt(100) + 200);
+						pressButton(player, characterSelector[player].getCursorX() == 0 ? GamepadButton.RIGHT : GamepadButton.LEFT);
+						characterSelector[player].moveCursorPosition(characterSelector[player].getCursorX() == 0 ? Direction.RIGHT : Direction.LEFT);
+			}
+			robot[player].delay(random.nextInt(100) + 200);
+			pressButton(player, characterSelector[player].getCursorY() < selector.getCursorY() ? GamepadButton.DOWN : GamepadButton.UP);
+			characterSelector[player].moveCursorPosition(characterSelector[player].getCursorY() < selector.getCursorY() ? Direction.DOWN : Direction.UP);
+		}
+		while (!close && !characterSelector[player].isAtSameColumn(selector)) { // Movendo o cursor horizontalmente até chegar na coluna do personagem escolhido
+			robot[player].delay(random.nextInt(100) + 200);
+			pressButton(player, characterSelector[player].getCursorX() < selector.getCursorX() ? GamepadButton.RIGHT : GamepadButton.LEFT);
+			characterSelector[player].moveCursorPosition(characterSelector[player].getCursorX() < selector.getCursorX() ? Direction.RIGHT : Direction.LEFT);
+		}
+	}
+
 	static void updateSpecialCount() {
-		BufferedImage bi = ImageUtils.getScreenShot(new Rectangle(290, 700, DesktopUtils.getSystemScreenWidth() - 580, 50));
+		BufferedImage bi = ImageUtils.getScreenShot(new Rectangle(special_capture_X, special_capture_Y, special_capture_W, special_capture_H));
 		int[] previewSpecials = {specials[0], specials[1]};
 		for (int rgb, pl = 0; pl < 2; pl++) {
 			if (currentPlayerAction[pl] != PlayerAction.STUNNED) {
 				rgb = 0;
 				specials[pl] = 0;
 				for (int z = 0; z < 2; z++) {
-					int x = z == 0 ? (pl == 0 ? 25 : 930) : (pl == 0 ? 45 : 915);
-					int y = z == 0 ? 15 : 37;
+					int x = z == 0 ? (pl == 0 ? special_X1 : special_X2) : (pl == 0 ? special_X1 + special_Xp : special_X2 - special_Xp);
+					int y = z == 0 ? special_Y1 : special_Y2;
 					rgb = ImageUtils.getRgbaArray(bi.getRGB(x, y))[0] +
 								ImageUtils.getRgbaArray(bi.getRGB(x, y))[1] +
 								ImageUtils.getRgbaArray(bi.getRGB(x, y))[2];
@@ -679,7 +854,7 @@ public class Main extends Application {
 
 	static void waitForSongStartAndCatchSongBpm() {
 		setGameAction(GameAction.WAITING_FOR_MUSIC_START);
-		Rectangle rect1 = new Rectangle(600, 455, 3, 3), rect2 = new Rectangle(740, 440, 3, 3);
+		Rectangle rect1 = new Rectangle(ready_X, ready_Y, 3, 3), rect2 = new Rectangle(ready_X2, ready_Y2, 3, 3);
 		while (!close && gameAction == GameAction.WAITING_FOR_MUSIC_START && ImageUtils.isImageContained(readyPng, getScreenShot(2, rect1)) == null);
 		while (!close && gameAction == GameAction.WAITING_FOR_MUSIC_START && ImageUtils.isImageContained(readyPng, getScreenShot(2, rect2)) == null);
 		while (!close && gameAction == GameAction.WAITING_FOR_MUSIC_START && ImageUtils.isImageContained(readyPng, getScreenShot(2, rect2)) != null);
@@ -693,6 +868,8 @@ public class Main extends Application {
 		}
 		atSolo = false;
 		atPreSolo = false;
+		repeatedCommands = new int[] {0, 0};
+		lastCommand = new String[] {"", ""};
 		int bpm = getBeatDelay();
 		nextCTimeToPress = (long)(System.currentTimeMillis() + (bpm - bpm / 4 - bpm / getBeatStartingDelay()));
 		setGameAction(GameAction.DANCING);
@@ -714,15 +891,27 @@ public class Main extends Application {
 	}
 	
 	static void runPlayerInputs() {
-		if (testing)
-			return;
 		for (int pl = 0; pl < 2; pl++) {
 			final int player = pl;
+			if (gameAction == GameAction.DANCING) {
+				final String inputsStr = inputToString(currentInputs.get(player));
+				if (!inputsStr.isEmpty() && lastCommand[player].equals(inputsStr)) {
+					if (++repeatedCommands[player] >= 3) {
+						sendToConsole("3+ MISS FOUND. DOING RETRY");
+						setGameAction(GameAction.WAITING_FOR_MUSIC_START);
+						Misc.sleep(2000);
+						pressButton(player, GamepadButton.START);
+						Misc.sleep(2000);
+						pressButton(player, GamepadButton.B);
+					}
+				}
+				lastCommand[player] = inputsStr;
+			}
 			if (currentInputs.get(player).size() > 1) {
 				executor.execute(new Task<Void> () {
 					@Override
 					protected Void call() throws Exception {
-						List<GamepadButton> inputs = new ArrayList<>(currentInputs.get(player).subList(0, currentInputs.get(player).size() - 1)); 
+						List<GamepadButton> inputs = new LinkedList<>(currentInputs.get(player).subList(0, currentInputs.get(player).size() - 1));
 						int totalInputs = inputs.size();
 						if (random.nextInt(10000) + 1 <= intentionalMissInputProc) {
 							sendToConsole("P" + (player + 1) + " ERROU O COMANDO PROPOSITALMENTE");
@@ -751,9 +940,9 @@ public class Main extends Application {
 		return s;
 	}
 
-	private static List<GamepadButton> getCurrentInputs(int player) {
+	static List<GamepadButton> getCurrentInputs(int player) {
 		boolean debug = player + 1 == debugPlayer;
-		List<GamepadButton> inputs = new ArrayList<>();
+		List<GamepadButton> inputs = new LinkedList<>();
 		Rectangle rect = new Rectangle(start_X + player * spacing, start_Y, (int)(width * 7.2f), height);
 		BufferedImage sc = getScreenShot(player, rect);
 		if (debug && debugCapturedScreenshots)
@@ -762,7 +951,7 @@ public class Main extends Application {
 			int x = (int)(w * width + (w < 6 ? 0 : spacing2));
 			Rectangle rect2 = new Rectangle(x + 10, 0, width - 20, height);
 			if (debug && debugCapturedScreenshots)
-				gcButtonsScrenshot.drawImage(SwingFXUtils.toFXImage(ImageUtils.copyFrom(sc, rect2), null), x + (w < 6 ? 1 * w : 1) - 19 * w, 0);
+				gcButtonsScrenshot.drawImage(SwingFXUtils.toFXImage(ImageUtils.copyAreaFromBufferedImage(sc, rect2), null), x + (w < 6 ? 1 * w : 1) - 19 * w, 0);
 			for (int n = 0; n < 8; n++) {
 				Point p = ImageUtils.isImageContained(BUTTONS_PNG.get(n), sc, rect2);
 				if (p != null)
@@ -775,12 +964,12 @@ public class Main extends Application {
 	static void updateFourthBeatButtons() {
 		for (int p1 = 0, p2 = 1; p1 < 2; p1++, p2--) {
 			if (!atSolo && currentPlayerAction[p1] != PlayerAction.STUNNED) { // Se não está no SOLO, e o jogador não estiver marcado como 'STUNNED'
-				if (!atPreSolo && currentPlayerAction[p2] == PlayerAction.ATTACKING) { // Se não estiver no pre-solo, e o oponente estiver marcado como 'ATTACKING'
-					if (random.nextInt(10000) + 1 <= (canStealSolo ? preSoloCounterProc : nonPreSoloCounterProc)) { // Chance de refletir o special do oponente
+				if (currentPlayerAction[p2] == PlayerAction.ATTACKING) { // Se não estiver no pre-solo, e o oponente estiver marcado como 'ATTACKING'
+					if (!atPreSolo && random.nextInt(10000) + 1 <= (canStealSolo ? preSoloCounterProc : nonPreSoloCounterProc)) { // Chance de refletir o special do oponente
 						beatButton[p1] = getAttackButton(p1);
 						currentPlayerAction[p1] = PlayerAction.COUNTERING;
 					}
-					else if (atPreSolo || random.nextInt(10000) + 1 <= dodgeUponFailCounterProc) // Chance de esquivar o ataque, caso falhe a condição anterior ou seja o pre-solo
+					else if (random.nextInt(10000) + 1 <= dodgeUponFailCounterProc) // Chance de esquivar o ataque, caso falhe a condição anterior
 						beatButton[p1] = getDodgeButton(p1);
 					else // Se falhar as 2 condições, simplesmente recebe o ataque
 						beatButton[p1] = null;
@@ -798,47 +987,28 @@ public class Main extends Application {
 	}
 
 	static void pressFourthBeatButtons() {
-		if (testing)
-			return;
-		System.out.println("1");
 		lastFinishButton = (lastFinishButton + 1) % 2;
-		System.out.println("2");
-		if (testFixStartDelay > -1)
-			lastFinishButton = 0;
-		System.out.println("3");
 		int p1 = lastFinishButton, p2 = (p1 + 1) % 2;
-		System.out.println("4");
 		if (((p1 + 1) & autoPlay) != 0 && beatButton[p1] != null && currentPlayerAction[p1] != PlayerAction.STUNNED)
 			robot[p1].keyPress(KEY_CODES[p1][beatButton[p1].getValue()]);
-		System.out.println("5");
 		if (((p2 + 1) & autoPlay) != 0 && beatButton[p2] != null && currentPlayerAction[p2] != PlayerAction.STUNNED)
 			robot[p2].keyPress(KEY_CODES[p2][beatButton[p2].getValue()]);
-		System.out.println("6");
 		for (int pl = 0; pl < 2; pl++) {
-			robot[pl].delay(40);
-			System.out.println("7");
-			robot[pl].keyRelease(KEY_CODES[pl][beatButton[pl].getValue()]);
-			System.out.println("8");
+			if (beatButton[pl] != null) {
+				robot[pl].delay(40);
+				robot[pl].keyRelease(KEY_CODES[pl][beatButton[pl].getValue()]);
+			}
 		}
-		System.out.println("9");
 		for (int pl = 0; pl < 2; pl++) {
 			if (beatButton[pl] == getDodgeButton(pl)) // Se o botão pressionado atualmente for o botão de esquiva, marcar o jogador como 'DODGEING'
 				currentPlayerAction[pl] = PlayerAction.DODGEING;
 			else if (beatButton[pl] != getAttackButton(pl)) // Se o botão pressionado atualmente não for nem esquiva e nem ataque, marcar jogador como 'DANCING'
 				currentPlayerAction[pl] = PlayerAction.DANCING;
-		}
-		System.out.println("8");
-	}
+			if (beatButton[pl] == getDodgeButton(pl) || beatButton[pl] == getAttackButton(pl)) {
+				repeatedCommands[pl] = 0;
+				lastCommand[pl] = "";
+			}
 
-	static void checkForMiss(int player) { // ARRUMAR COORDENADA DO MISS TIRANDO SCREENSHOT PELO PROGRAMA USANDO X
-		if (gameAction == GameAction.DANCING &&
-				ImageUtils.isImageContained(missPng, getScreenShot(player, new Rectangle(453 + player * 550, 623, 80, 30))) != null) {
-					sendToConsole("MISS FOUND. DOING RETRY");
-					setGameAction(GameAction.WAITING_FOR_MUSIC_START);
-					Misc.sleep(2000);
-					pressButton(player, GamepadButton.START);
-					Misc.sleep(2000);
-					pressButton(player, GamepadButton.B);
 		}
 	}
 
@@ -854,7 +1024,7 @@ public class Main extends Application {
 		});
 	}
 	
-	static void pressButtons(int player, List<GamepadButton> inputs, int holdDelay) {
+	public static void pressButtons(int player, List<GamepadButton> inputs, int holdDelay) {
 		new Thread(() -> {
 			for (GamepadButton b : inputs)
 				if (b != null) {
@@ -866,13 +1036,13 @@ public class Main extends Application {
 		}).start();
 	}
 
-	static void pressButton(int player, GamepadButton input, int holdDelay) //
+	public static void pressButton(int player, GamepadButton input, int holdDelay) //
 		{ pressButtons(player, Arrays.asList(input), holdDelay); }
 
-	static void pressButton(int player, GamepadButton input) //
+	public static void pressButton(int player, GamepadButton input) //
 		{ pressButton(player, input, 50); }
 	
-	static void pressButton(GamepadButton input) //
+	public static void pressButton(GamepadButton input) //
 		{ pressButton(2, input, 50); }
 
 	static BufferedImage getScreenShot(int player, Rectangle captureArea) {
@@ -921,6 +1091,7 @@ public class Main extends Application {
 		if (debugConsole) {
 			gcConsole.setFill(Color.BLACK);
 			gcConsole.fillRect(0, 0, canvasConsole.getWidth(), canvasConsole.getHeight());
+			drawConsole();
 		}
 	}
 	
@@ -937,5 +1108,5 @@ public class Main extends Application {
 	
 	public static void main(String[] args)
 		{ launch(args); }
-
+	
 }
